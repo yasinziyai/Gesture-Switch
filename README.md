@@ -1,0 +1,44 @@
+# Mac Gesture Tabs (Electron + React + TypeScript)
+
+اپ دسکتاپ macOS که با ژست دست یا حرکت چشم (وب‌کم) بین Desktop Spaceها جابه‌جا می‌شود.
+
+## قابلیت فعلی
+- Hand Mode: Swipe راست/چپ دست -> Desktop بعدی/قبلی
+- Face Mode: حرکت صورت/نگاه راست/چپ -> Desktop بعدی/قبلی
+
+## استک
+- Electron (اپ نصبی macOS)
+- React + TypeScript + Vite (رابط کاربری)
+- MediaPipe Tasks Vision (تشخیص دست)
+
+## اجرا در حالت توسعه (Bun)
+```bash
+bun install
+bun run dev
+```
+
+## ساخت نسخه نصبی مک (DMG)
+```bash
+bun run dist:mac
+```
+
+خروجی در مسیر زیر ساخته می‌شود:
+- `dist/` برای renderer
+- `dist-electron/` برای main/preload
+- `dist/*.dmg` برای نصب روی macOS
+
+## مجوزهای لازم در macOS
+1. Camera برای خود اپ
+2. Accessibility برای اپ (System Settings -> Privacy & Security -> Accessibility)
+
+بدون Accessibility، ارسال شرت‌کات سیستمی توسط AppleScript انجام نمی‌شود.
+
+## راهنمای داخل اپ
+داخل UI یک بخش «راهنمای استفاده» گذاشته شده که مراحل فعال‌سازی و troubleshooting را توضیح می‌دهد.
+
+## ساختار مهم پروژه
+- `electron/main.ts`: پنجره Electron + IPC + اجرای AppleScript
+- `electron/preload.ts`: bridge امن بین renderer و main
+- `src/hooks/useHandGestureTabs.ts`: pipeline تشخیص ژست
+- `src/services/swipeDetector.ts`: تشخیص swipe با cooldown
+- `src/services/shortcutClient.ts`: فراخوانی IPC برای شرت‌کات تب
