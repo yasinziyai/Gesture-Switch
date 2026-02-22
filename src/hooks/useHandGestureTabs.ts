@@ -24,8 +24,18 @@ const FACE_MODEL_CANDIDATES = [
 
 const WASM_ROOT_CANDIDATES = ['/mediapipe/wasm', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm'];
 
-const POINTER_MOVE_INTERVAL_MS = 60;
-const POINTER_CLICK_COOLDOWN_MS = 480;
+const POINTER_MOVE_INTERVAL_MS = 24;
+const POINTER_CLICK_COOLDOWN_MS = 360;
+const POINTER_CLICK_FREEZE_MS = 180;
+const POINTER_DWELL_CLICK_MS = 500;
+const POINTER_DWELL_RADIUS = 0.018;
+const POINTER_GAIN_X = 1.9;
+const POINTER_GAIN_Y = 1.9;
+const POINTER_SMOOTHING_ALPHA_BASE = 0.14;
+const POINTER_SMOOTHING_ALPHA_MAX = 0.5;
+const POINTER_DEADZONE_BASE = 0.0055;
+const POINTER_VELOCITY_MIN = 0.8;
+const POINTER_VELOCITY_MAX = 16;
 type VisionFileset = Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>;
 
 function getEyeSignalX(landmarks: { x: number }[]): number | null {
@@ -38,6 +48,26 @@ function getEyeSignalX(landmarks: { x: number }[]): number | null {
 
   const noseTip = landmarks[1];
   return noseTip?.x ?? null;
+}
+
+function clamp01(value: number): number {
+  return Math.max(0, Math.min(1, value));
+}
+
+function applyPointerGain(value: number, gain: number): number {
+  return clamp01(0.5 + (value - 0.5) * gain);
+}
+
+function isFingerExtended(
+  tip: { y: number } | undefined,
+  pip: { y: number } | undefined,
+  margin = 0.012
+): boolean {
+  if (!tip || !pip) {
+    return false;
+  }
+
+  return tip.y < pip.y - margin;
 }
 
 async function createResolverWithFallback(): Promise<VisionFileset> {
@@ -109,7 +139,14 @@ export function useHandGestureTabs() {
   const shortcutInFlightRef = useRef(false);
   const pointerMoveAtRef = useRef(0);
   const pointerClickAtRef = useRef(0);
-  const pointerPressedRef = useRef(false);
+  const pointerFreezeUntilRef = useRef(0);
+  const pointerSmoothedRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerLastSentRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerLastRawRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerLastRawAtRef = useRef(0);
+  const pointerDwellStartAtRef = useRef(0);
+  const pointerDwellAnchorRef = useRef<{ x: number; y: number } | null>(null);
+  const pointerDwellClickedRef = useRef(false);
 
   const handSwipeDetector = useMemo(() => new SwipeDetector(), []);
   const faceSwipeDetector = useMemo(
@@ -207,50 +244,122 @@ export function useHandGestureTabs() {
         const firstHand = handResult.landmarks[0];
         const indexTip = firstHand?.[8];
         const indexPip = firstHand?.[6];
-        const indexMcp = firstHand?.[5];
+        const middleTip = firstHand?.[12];
+        const middlePip = firstHand?.[10];
+        const ringTip = firstHand?.[16];
+        const ringPip = firstHand?.[14];
+        const pinkyTip = firstHand?.[20];
+        const pinkyPip = firstHand?.[18];
 
-        if (!indexTip || !indexPip || !indexMcp) {
-          pointerPressedRef.current = false;
+        if (!indexTip || !indexPip) {
+          pointerFreezeUntilRef.current = 0;
+          pointerSmoothedRef.current = null;
+          pointerLastSentRef.current = null;
+          pointerLastRawRef.current = null;
+          pointerLastRawAtRef.current = 0;
+          pointerDwellStartAtRef.current = 0;
+          pointerDwellAnchorRef.current = null;
+          pointerDwellClickedRef.current = false;
         } else {
-          if (now - pointerMoveAtRef.current >= POINTER_MOVE_INTERVAL_MS) {
-            pointerMoveAtRef.current = now;
-            const pointerX = 1 - indexTip.x;
-            const pointerY = indexTip.y;
+          const rawPointerX = 1 - indexTip.x;
+          const rawPointerY = indexTip.y;
+          const pointerX = applyPointerGain(rawPointerX, POINTER_GAIN_X);
+          const pointerY = applyPointerGain(rawPointerY, POINTER_GAIN_Y);
+          const lastRaw = pointerLastRawRef.current;
+          const dtMs = pointerLastRawAtRef.current > 0 ? now - pointerLastRawAtRef.current : 0;
+          const speed =
+            lastRaw && dtMs > 0
+              ? (Math.hypot(pointerX - lastRaw.x, pointerY - lastRaw.y) / dtMs) * 1000
+              : 0;
+          const velocityT = clamp01(
+            (speed - POINTER_VELOCITY_MIN) / (POINTER_VELOCITY_MAX - POINTER_VELOCITY_MIN)
+          );
+          const adaptiveAlpha =
+            POINTER_SMOOTHING_ALPHA_BASE +
+            (POINTER_SMOOTHING_ALPHA_MAX - POINTER_SMOOTHING_ALPHA_BASE) * velocityT;
+          const adaptiveDeadzone = POINTER_DEADZONE_BASE * (1 - velocityT * 0.72);
+          const smoothed = pointerSmoothedRef.current
+            ? {
+                x:
+                  pointerSmoothedRef.current.x +
+                  (pointerX - pointerSmoothedRef.current.x) * adaptiveAlpha,
+                y:
+                  pointerSmoothedRef.current.y +
+                  (pointerY - pointerSmoothedRef.current.y) * adaptiveAlpha
+              }
+            : { x: pointerX, y: pointerY };
 
-            void movePointer(pointerX, pointerY).catch((error) => {
-              const message = error instanceof Error ? error.message : 'unknown error';
-              setState((prev) => ({
-                ...prev,
-                message: `Pointer move failed: ${message}`
-              }));
-            });
-          }
-
-          const extensionThreshold = 0.015;
-          const isBent = indexTip.y > indexPip.y - extensionThreshold;
+          pointerLastRawRef.current = { x: pointerX, y: pointerY };
+          pointerLastRawAtRef.current = now;
+          pointerSmoothedRef.current = smoothed;
 
           if (
-            isBent &&
-            !pointerPressedRef.current &&
-            now - pointerClickAtRef.current >= POINTER_CLICK_COOLDOWN_MS
+            now >= pointerFreezeUntilRef.current &&
+            now - pointerMoveAtRef.current >= POINTER_MOVE_INTERVAL_MS
           ) {
-            pointerPressedRef.current = true;
-            pointerClickAtRef.current = now;
+            const lastSent = pointerLastSentRef.current;
+            const drift = lastSent ? Math.hypot(smoothed.x - lastSent.x, smoothed.y - lastSent.y) : Infinity;
 
-            void leftClick().catch((error) => {
-              const message = error instanceof Error ? error.message : 'unknown error';
-              setState((prev) => ({
-                ...prev,
-                message: `Pointer click failed: ${message}`
-              }));
-            });
+            if (drift >= adaptiveDeadzone) {
+              pointerMoveAtRef.current = now;
+              pointerLastSentRef.current = { x: smoothed.x, y: smoothed.y };
 
-            setState((prev) => ({
-              ...prev,
-              message: 'Pointer mode: index finger bent -> click.'
-            }));
-          } else if (!isBent) {
-            pointerPressedRef.current = false;
+              void movePointer(smoothed.x, smoothed.y).catch((error) => {
+                const message = error instanceof Error ? error.message : 'unknown error';
+                setState((prev) => ({
+                  ...prev,
+                  message: `Pointer move failed: ${message}`
+                }));
+              });
+            }
+          }
+
+          const isIndexExtended = isFingerExtended(indexTip, indexPip);
+          const isMiddleExtended = isFingerExtended(middleTip, middlePip);
+          const isRingExtended = isFingerExtended(ringTip, ringPip);
+          const isPinkyExtended = isFingerExtended(pinkyTip, pinkyPip);
+          const isIndexOnlyPose =
+            isIndexExtended && !isMiddleExtended && !isRingExtended && !isPinkyExtended;
+
+          if (!isIndexOnlyPose) {
+            pointerDwellStartAtRef.current = 0;
+            pointerDwellAnchorRef.current = null;
+            pointerDwellClickedRef.current = false;
+          } else {
+            const anchor = pointerDwellAnchorRef.current;
+            if (!anchor) {
+              pointerDwellAnchorRef.current = { x: smoothed.x, y: smoothed.y };
+              pointerDwellStartAtRef.current = now;
+              pointerDwellClickedRef.current = false;
+            } else {
+              const dwellDrift = Math.hypot(smoothed.x - anchor.x, smoothed.y - anchor.y);
+              if (dwellDrift > POINTER_DWELL_RADIUS) {
+                pointerDwellAnchorRef.current = { x: smoothed.x, y: smoothed.y };
+                pointerDwellStartAtRef.current = now;
+                pointerDwellClickedRef.current = false;
+              } else if (
+                !pointerDwellClickedRef.current &&
+                now - pointerDwellStartAtRef.current >= POINTER_DWELL_CLICK_MS &&
+                now - pointerClickAtRef.current >= POINTER_CLICK_COOLDOWN_MS
+              ) {
+                pointerDwellClickedRef.current = true;
+                pointerClickAtRef.current = now;
+                pointerFreezeUntilRef.current = now + POINTER_CLICK_FREEZE_MS;
+
+                void leftClick().catch((error) => {
+                  const message = error instanceof Error ? error.message : 'unknown error';
+                  setState((prev) => ({
+                    ...prev,
+                    message: `Pointer click failed: ${message}`
+                  }));
+                });
+
+                setState((prev) => ({
+                  ...prev,
+                  message: 'Pointer mode: dwell click fired (index-only hold 1s).'
+                }));
+              }
+            }
           }
         }
       }
@@ -321,7 +430,7 @@ export function useHandGestureTabs() {
             ? 'Hand mode is running. Swipe hand left/right for desktop switching.'
             : controlMode === 'face'
               ? 'Face mode is running. Move face/gaze left/right for desktop switching.'
-              : 'Pointer mode is running. Move index fingertip to move mouse, bend index to click.',
+              : 'Pointer mode is running. Move index fingertip. Hold 1s with index-only to click.',
         lastGesture: null
       });
 
@@ -362,7 +471,14 @@ export function useHandGestureTabs() {
     }
 
     shortcutInFlightRef.current = false;
-    pointerPressedRef.current = false;
+    pointerFreezeUntilRef.current = 0;
+    pointerSmoothedRef.current = null;
+    pointerLastSentRef.current = null;
+    pointerLastRawRef.current = null;
+    pointerLastRawAtRef.current = 0;
+    pointerDwellStartAtRef.current = 0;
+    pointerDwellAnchorRef.current = null;
+    pointerDwellClickedRef.current = false;
     pointerMoveAtRef.current = 0;
     pointerClickAtRef.current = 0;
 
@@ -390,7 +506,7 @@ export function useHandGestureTabs() {
               ? 'Mode switched to hand. Swipe hand left/right.'
               : mode === 'face'
                 ? 'Mode switched to face. Move face/gaze left/right.'
-                : 'Mode switched to pointer. Move fingertip, bend index to click.'
+                : 'Mode switched to pointer. Move fingertip, hold index-only for 1s to click.'
             : prev.message
       }));
     },

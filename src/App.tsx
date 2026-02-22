@@ -13,7 +13,7 @@ const MODE_LABELS: Record<ControlMode, { title: string; hint: string }> = {
   },
   pointer: {
     title: 'Pointer',
-    hint: 'نوک اشاره = حرکت موس | خم شدن اشاره = کلیک'
+    hint: 'نوک اشاره = حرکت موس | نگه داشتن ۱ ثانیه با اشاره تنها = کلیک'
   }
 };
 
@@ -31,7 +31,7 @@ export function App() {
       <header className="topbar glass">
         <div  className="brand">
           <div className="badge">GS</div>
-          <div >
+          <div style={{alignItems:"flex-start" }}>
             <h1>Gesture Switch</h1>
             <p>macOS Desktop + Pointer Control</p>
           </div>
@@ -87,7 +87,7 @@ export function App() {
             <li>دکمه «روشن کردن سرویس» را بزن تا دوربین در پس زمینه فعال شود.</li>
             <li>نمایش دوربین داخل اپ حذف شده ولی پردازش دوربین فعال می ماند.</li>
             <li>برای Hand/Face، جابه جایی بین Desktop Spaceها انجام می شود.</li>
-            <li>در Pointer، نوک اشاره موس را حرکت می دهد و خم شدن اشاره کلیک می زند.</li>
+            <li>در Pointer، نوک اشاره موس را حرکت می دهد و اگر فقط اشاره بالا باشد و ۱ ثانیه روی هدف بماند کلیک می زند.</li>
             <li>برای کارکرد کامل، Camera و Accessibility در macOS باید Allow باشد.</li>
             <li>با بستن پنجره، اپ در پس زمینه می ماند و از منوبار قابل بازشدن است.</li>
           </ul>
