@@ -11,6 +11,12 @@ const api = {
   },
   leftClick(): Promise<void> {
     return ipcRenderer.invoke('pointer:click');
+  },
+  openWhiteboard(): Promise<void> {
+    return ipcRenderer.invoke('whiteboard:open');
+  },
+  closeWhiteboard(): Promise<void> {
+    return ipcRenderer.invoke('whiteboard:close');
   }
 };
 

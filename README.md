@@ -1,4 +1,4 @@
-# Mac Gesture Tabs (Electron + React + TypeScript)
+# Gestivo (Electron + React + TypeScript)
 
 اپ دسکتاپ macOS که با ژست دست یا حرکت چشم (وب‌کم) بین Desktop Spaceها جابه‌جا می‌شود.
 

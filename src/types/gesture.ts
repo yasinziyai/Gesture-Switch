@@ -1,5 +1,5 @@
 export type TabDirection = 'next' | 'prev';
-export type ControlMode = 'hand' | 'face' | 'pointer';
+export type ControlMode = 'hand' | 'face';
 
 export interface GestureConfig {
   windowMs: number;

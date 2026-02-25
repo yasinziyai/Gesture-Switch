@@ -6,11 +6,14 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 
 const execFileAsync = promisify(execFile);
+const MAIN_LOAD_TIMEOUT_MS = 2500;
+const MIN_SPLASH_VISIBLE_MS = 1700;
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
 
 let mainWindow: BrowserWindow | null = null;
+let whiteboardWindow: BrowserWindow | null = null;
 let tray: Tray | null = null;
 let isQuitting = false;
 
@@ -103,6 +106,16 @@ function showWindow(): void {
   positionWindowUnderTray(mainWindow);
   mainWindow.show();
   mainWindow.focus();
+  setTimeout(() => {
+    if (mainWindow?.isVisible()) {
+      positionWindowUnderTray(mainWindow);
+    }
+  }, 120);
+  setTimeout(() => {
+    if (mainWindow?.isVisible()) {
+      positionWindowUnderTray(mainWindow);
+    }
+  }, 320);
 }
 
 function toggleWindow(): void {
@@ -118,6 +131,88 @@ function toggleWindow(): void {
   showWindow();
 }
 
+function whiteboardUrl(isDev: boolean, devUrl?: string): string | null {
+  if (!isDev || !devUrl) {
+    return null;
+  }
+
+  return `${devUrl}#whiteboard`;
+}
+
+function splashUrl(isDev: boolean, devUrl?: string): string | null {
+  if (!isDev || !devUrl) {
+    return null;
+  }
+
+  return `${devUrl}#splash`;
+}
+
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+async function waitWithTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
+  await Promise.race([promise.then(() => undefined), delay(timeoutMs)]);
+}
+
+async function createWhiteboardWindow(): Promise<BrowserWindow> {
+  const existing = whiteboardWindow;
+  if (existing && !existing.isDestroyed()) {
+    return existing;
+  }
+
+  const window = new BrowserWindow({
+    width: 1400,
+    height: 900,
+    show: false,
+    title: 'Gestivo Whiteboard',
+    backgroundColor: '#0a111f',
+    autoHideMenuBar: true,
+    fullscreenable: true,
+    webPreferences: {
+      preload: path.join(__dirname, 'preload.cjs'),
+      contextIsolation: true,
+      nodeIntegration: false,
+      sandbox: false,
+      backgroundThrottling: false
+    }
+  });
+
+  window.on('closed', () => {
+    if (whiteboardWindow === window) {
+      whiteboardWindow = null;
+    }
+  });
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  const wbUrl = whiteboardUrl(!app.isPackaged, devUrl);
+  if (wbUrl) {
+    await window.loadURL(wbUrl);
+  } else {
+    await window.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'whiteboard' });
+  }
+
+  whiteboardWindow = window;
+  return window;
+}
+
+async function showWhiteboardWindow(): Promise<void> {
+  const window = await createWhiteboardWindow();
+  window.show();
+  window.focus();
+  if (!window.isFullScreen()) {
+    window.setFullScreen(true);
+  }
+}
+
+function closeWhiteboardWindow(): void {
+  if (!whiteboardWindow || whiteboardWindow.isDestroyed()) {
+    return;
+  }
+
+  whiteboardWindow.close();
+}
+
 async function createWindow(): Promise<void> {
   mainWindow = new BrowserWindow({
     width: 460,
@@ -126,7 +221,7 @@ async function createWindow(): Promise<void> {
     minHeight: 520,
     maxWidth: 520,
     maxHeight: 680,
-    title: 'Gesture Switch',
+    title: 'Gestivo',
     show: false,
     resizable: false,
     maximizable: false,
@@ -158,25 +253,43 @@ async function createWindow(): Promise<void> {
   });
 
   const devUrl = process.env.VITE_DEV_SERVER_URL;
+  let loadPromise: Promise<unknown>;
   if (!app.isPackaged && devUrl) {
-    await mainWindow.loadURL(devUrl);
+    loadPromise = mainWindow.loadURL(splashUrl(true, devUrl) ?? devUrl);
   } else {
-    await mainWindow.loadFile(path.join(__dirname, '../dist/index.html'));
+    loadPromise = mainWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'splash' });
+  }
+  await waitWithTimeout(loadPromise, MAIN_LOAD_TIMEOUT_MS);
+}
+
+async function showMainContentInWindow(): Promise<void> {
+  if (!mainWindow || mainWindow.isDestroyed()) {
+    return;
+  }
+
+  const devUrl = process.env.VITE_DEV_SERVER_URL;
+  if (!app.isPackaged && devUrl) {
+    await waitWithTimeout(mainWindow.loadURL(devUrl), MAIN_LOAD_TIMEOUT_MS);
+  } else {
+    await waitWithTimeout(
+      mainWindow.loadFile(path.join(__dirname, '../dist/index.html')),
+      MAIN_LOAD_TIMEOUT_MS
+    );
   }
 }
 
 function createTray(): void {
   const icon = nativeImage.createEmpty();
   tray = new Tray(icon);
-  tray.setTitle('GS');
-  tray.setToolTip('Gesture Switch');
+  tray.setTitle('GV');
+  tray.setToolTip('Gestivo');
   tray.on('click', () => {
     toggleWindow();
   });
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Open Gesture Switch',
+      label: 'Open Gestivo',
       click: () => showWindow()
     },
     {
@@ -222,9 +335,22 @@ app.whenReady().then(async () => {
     await leftMouseClick();
   });
 
-  await createWindow();
+  ipcMain.handle('whiteboard:open', async () => {
+    await showWhiteboardWindow();
+  });
+
+  ipcMain.handle('whiteboard:close', () => {
+    closeWhiteboardWindow();
+  });
+
   createTray();
+  await createWindow();
   showWindow();
+  await delay(MIN_SPLASH_VISIBLE_MS);
+  await showMainContentInWindow();
+  if (mainWindow?.isVisible()) {
+    positionWindowUnderTray(mainWindow);
+  }
 
   app.on('activate', () => {
     showWindow();

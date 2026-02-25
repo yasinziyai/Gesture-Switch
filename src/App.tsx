@@ -1,49 +1,137 @@
-import { useMemo, useState } from "react";
+import { Suspense, lazy, useEffect, useMemo, useState } from "react";
+import { motion } from "framer-motion";
+import type { Variants } from "framer-motion";
 import { useHandGestureTabs } from "./hooks/useHandGestureTabs";
 import type { ControlMode } from "./types/gesture";
+import { WhiteboardPage } from "./components/WhiteboardPage";
 
-const MODE_LABELS: Record<ControlMode, { title: string; hint: string }> = {
+const SplashPage = lazy(() =>
+  import("./components/SplashPage").then((module) => ({
+    default: module.SplashPage,
+  })),
+);
+
+type UIMode = ControlMode | "whiteboard";
+
+const MODE_LABELS: Record<UIMode, { title: string; hint: string }> = {
   hand: {
-    title: "Hand",
-    hint: "سوایپ دست چپ/راست برای جابه جایی دسکتاپ",
+    title: "Hand + Pointer",
+    hint: "دست باز = سوایپ برای جابه جایی | فقط اشاره = حرکت موس و کلیک",
   },
   face: {
     title: "Face",
     hint: "حرکت صورت/نگاه چپ/راست برای جابه جایی دسکتاپ",
   },
-  pointer: {
-    title: "Pointer",
-    hint: "نوک اشاره = حرکت موس | نگه داشتن ۱ ثانیه با اشاره تنها = کلیک",
+  whiteboard: {
+    title: "Whiteboard",
+    hint: "باز کردن وایت‌بورد فول‌اسکرین با ابزار رسم",
   },
 };
 
-export function App() {
+const EASE_OUT: [number, number, number, number] = [0.22, 1, 0.36, 1];
+
+const containerVariants: Variants = {
+  hidden: { opacity: 0, y: 10 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    transition: {
+      duration: 0.34,
+      ease: EASE_OUT,
+      when: "beforeChildren",
+      staggerChildren: 0.065,
+    },
+  },
+};
+
+const itemVariants: Variants = {
+  hidden: { opacity: 0, y: 12, scale: 0.985 },
+  visible: {
+    opacity: 1,
+    y: 0,
+    scale: 1,
+    transition: {
+      duration: 0.28,
+      ease: EASE_OUT,
+    },
+  },
+};
+
+const guideListVariants: Variants = {
+  hidden: {},
+  visible: {
+    transition: {
+      staggerChildren: 0.07,
+      delayChildren: 0.08,
+    },
+  },
+};
+
+const guideItemVariants: Variants = {
+  hidden: { opacity: 0, x: 12, filter: "blur(3px)" },
+  visible: {
+    opacity: 1,
+    x: 0,
+    filter: "blur(0px)",
+    transition: {
+      duration: 0.26,
+      ease: EASE_OUT,
+    },
+  },
+};
+
+function ControlPanelApp() {
   const {
     videoRef,
     start,
     stop,
     status,
     message,
-    controlMode,
     setControlMode,
   } = useHandGestureTabs();
+  const [selectedMode, setSelectedMode] = useState<UIMode>("hand");
   const [view, setView] = useState<"control" | "guide">("control");
 
   const running =
     status === "running" ||
     status === "loading-model" ||
     status === "camera-starting";
-  const currentMode = useMemo(() => MODE_LABELS[controlMode], [controlMode]);
+  const currentMode = useMemo(() => MODE_LABELS[selectedMode], [selectedMode]);
+
+  const openWhiteboard = async () => {
+    if (!window.electronAPI) {
+      return;
+    }
+    await window.electronAPI.openWhiteboard();
+  };
+
+  const onSelectMode = (mode: UIMode) => {
+    setSelectedMode(mode);
+    if (mode === "whiteboard") {
+      if (running) {
+        stop();
+      }
+      return;
+    }
+    setControlMode(mode);
+  };
 
   return (
-    <main style={{ marginTop: 20 }} className="shell" dir="rtl">
+    <motion.main
+      style={{ marginTop: 20 }}
+      className="shell"
+      dir="rtl"
+      variants={containerVariants}
+      initial="hidden"
+      animate="visible"
+    >
       <video ref={videoRef} className="hidden-video" muted playsInline />
 
-      <header className="topbar glass">
+      <motion.header className="topbar glass" variants={itemVariants}>
         <div className="brand">
-          <div className="badge">GS</div>
+          <div className="badge">GV</div>
           <div>
-            <h1>Gesture Switch</h1>
+            <h1>Gestivo</h1>
             <p>macOS Desktop + Pointer Control</p>
           </div>
         </div>
@@ -63,70 +151,139 @@ export function App() {
             راهنما
           </button>
         </div>
-      </header>
+      </motion.header>
 
       {view === "control" ? (
-        <section className="panel glass">
+        <motion.section className="panel glass" variants={itemVariants}>
           <h2>انتخاب حالت</h2>
           <div className="mode-grid">
-            {(["hand", "face", "pointer"] as ControlMode[]).map((mode) => (
-              <button
+            {(["hand", "face", "whiteboard"] as UIMode[]).map((mode) => (
+              <motion.button
                 key={mode}
                 type="button"
-                className={`mode-btn ${controlMode === mode ? "selected" : ""}`}
-                onClick={() => setControlMode(mode)}
+                className={`mode-btn ${selectedMode === mode ? "selected" : ""}`}
+                onClick={() => onSelectMode(mode)}
+                whileHover={{ y: -2, scale: 1.01 }}
+                whileTap={{ scale: 0.985 }}
               >
                 <span>{MODE_LABELS[mode].title}</span>
                 <small>{MODE_LABELS[mode].hint}</small>
-              </button>
+              </motion.button>
             ))}
           </div>
 
           <div className="power-row">
-            <button
-              type="button"
-              className="power"
-              onClick={() => (running ? stop() : void start())}
-            >
-              {running ? "خاموش کردن سرویس" : "روشن کردن سرویس"}
-            </button>
+            {selectedMode === "whiteboard" ? (
+              <motion.button
+                type="button"
+                className="power"
+                onClick={() => void openWhiteboard()}
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.985 }}
+              >
+                باز کردن Whiteboard (تمام صفحه)
+              </motion.button>
+            ) : (
+              <motion.button
+                type="button"
+                className="power"
+                onClick={() => (running ? stop() : void start())}
+                whileHover={{ y: -2 }}
+                whileTap={{ scale: 0.985 }}
+              >
+                {running ? "خاموش کردن سرویس" : "روشن کردن سرویس"}
+              </motion.button>
+            )}
           </div>
 
-          <div className={`status ${status === "error" ? "error" : ""}`}>
+          <motion.div
+            className={`status ${status === "error" ? "error" : ""}`}
+            variants={itemVariants}
+          >
             <p>
               <strong>Mode:</strong> {currentMode.title}
             </p>
             <p>
               <strong>Status:</strong> {status}
             </p>
-            <p className="message">{message}</p>
-          </div>
-        </section>
+            <p className="message">
+              {selectedMode === "whiteboard"
+                ? "مود وایت‌بورد یک پنجره جدا و فول‌اسکرین باز می‌کند."
+                : message}
+            </p>
+          </motion.div>
+        </motion.section>
       ) : (
-        <section className="panel glass guide-page">
+        <motion.section
+          className="panel glass guide-page"
+          variants={itemVariants}
+        >
           <h2>راهنمای استفاده</h2>
-          <ul>
-            <li>در صفحه کنترل، مود مورد نظر را انتخاب کن.</li>
-            <li>
+          <motion.ul
+            variants={guideListVariants}
+            initial="hidden"
+            animate="visible"
+          >
+            <motion.li variants={guideItemVariants}>
+              در صفحه کنترل، مود مورد نظر را انتخاب کن.
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
               دکمه «روشن کردن سرویس» را بزن تا دوربین در پس زمینه فعال شود.
-            </li>
-            <li>
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
               نمایش دوربین داخل اپ حذف شده ولی پردازش دوربین فعال می ماند.
-            </li>
-            <li>برای Hand/Face، جابه جایی بین Desktop Spaceها انجام می شود.</li>
-            <li>
-              در Pointer، نوک اشاره موس را حرکت می دهد و اگر فقط اشاره بالا باشد
-              و ۱ ثانیه روی هدف بماند کلیک می زند.
-            </li>
-            <li>
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
+              برای Hand/Face، جابه جایی بین Desktop Spaceها انجام می شود.
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
+              در Hand، اگر همه انگشت ها باز باشند با سوایپ تب جابه جا می شود.
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
+              در Hand، اگر فقط انگشت اشاره باز باشد موس حرکت می کند و با نگه
+              داشتن ۱ ثانیه کلیک می زند.
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
               برای کارکرد کامل، Camera و Accessibility در macOS باید Allow باشد.
-            </li>
-            <li>
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
               با بستن پنجره، اپ در پس زمینه می ماند و از منوبار قابل بازشدن است.
-            </li>
-          </ul>
-        </section>
+            </motion.li>
+            <motion.li variants={guideItemVariants}>
+              در Whiteboard یک پنجره جدا و تمام‌صفحه باز می شود و سایز پنجره
+              اصلی ثابت می ماند.
+            </motion.li>
+          </motion.ul>
+        </motion.section>
       )}
-    </main>
+    </motion.main>
   );
+}
+
+export function App() {
+  const [hash, setHash] = useState(window.location.hash);
+
+  useEffect(() => {
+    const onHashChange = () => {
+      setHash(window.location.hash);
+    };
+    window.addEventListener("hashchange", onHashChange);
+    return () => {
+      window.removeEventListener("hashchange", onHashChange);
+    };
+  }, []);
+
+  if (hash === "#splash") {
+    return (
+      <Suspense fallback={<main className="splash-shell" />}>
+        <SplashPage />
+      </Suspense>
+    );
+  }
+
+  if (hash === "#whiteboard") {
+    return <WhiteboardPage />;
+  }
+
+  return <ControlPanelApp />;
 }
