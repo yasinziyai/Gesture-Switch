@@ -12,17 +12,9 @@ interface HookState {
   lastGesture: TabDirection | null;
 }
 
-const HAND_MODEL_CANDIDATES = [
-  '/mediapipe/models/hand_landmarker.task',
-  'https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task'
-];
-
-const FACE_MODEL_CANDIDATES = [
-  '/mediapipe/models/face_landmarker.task',
-  'https://storage.googleapis.com/mediapipe-models/face_landmarker/face_landmarker/float16/1/face_landmarker.task'
-];
-
-const WASM_ROOT_CANDIDATES = ['/mediapipe/wasm', 'https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm'];
+const LOCAL_HAND_MODEL_PATH = '/mediapipe/models/hand_landmarker.task';
+const LOCAL_FACE_MODEL_PATH = '/mediapipe/models/face_landmarker.task';
+const LOCAL_WASM_ROOT = '/mediapipe/wasm';
 
 const POINTER_MOVE_INTERVAL_MS = 24;
 const POINTER_CLICK_COOLDOWN_MS = 360;
@@ -70,63 +62,45 @@ function isFingerExtended(
   return tip.y < pip.y - margin;
 }
 
-async function createResolverWithFallback(): Promise<VisionFileset> {
-  const errors: string[] = [];
-
-  for (const root of WASM_ROOT_CANDIDATES) {
-    try {
-      return await FilesetResolver.forVisionTasks(root);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
-      errors.push(`wasm root ${root}: ${message}`);
-    }
+async function createLocalResolver(): Promise<VisionFileset> {
+  try {
+    return await FilesetResolver.forVisionTasks(LOCAL_WASM_ROOT);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown error';
+    throw new Error(`local wasm ${LOCAL_WASM_ROOT}: ${message}`);
   }
-
-  throw new Error(errors.join(' | '));
 }
 
-async function createHandLandmarkerWithFallback(
+async function createLocalHandLandmarker(
   filesetResolver: VisionFileset
 ): Promise<HandLandmarker> {
-  const errors: string[] = [];
-
-  for (const modelAssetPath of HAND_MODEL_CANDIDATES) {
-    try {
-      return await HandLandmarker.createFromOptions(filesetResolver, {
-        baseOptions: { modelAssetPath },
-        runningMode: 'VIDEO',
-        numHands: 1
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
-      errors.push(`hand model ${modelAssetPath}: ${message}`);
-    }
+  try {
+    return await HandLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: { modelAssetPath: LOCAL_HAND_MODEL_PATH },
+      runningMode: 'VIDEO',
+      numHands: 1
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown error';
+    throw new Error(`local hand model ${LOCAL_HAND_MODEL_PATH}: ${message}`);
   }
-
-  throw new Error(errors.join(' | '));
 }
 
-async function createFaceLandmarkerWithFallback(
+async function createLocalFaceLandmarker(
   filesetResolver: VisionFileset
 ): Promise<FaceLandmarker> {
-  const errors: string[] = [];
-
-  for (const modelAssetPath of FACE_MODEL_CANDIDATES) {
-    try {
-      return await FaceLandmarker.createFromOptions(filesetResolver, {
-        baseOptions: { modelAssetPath },
-        runningMode: 'VIDEO',
-        numFaces: 1,
-        outputFaceBlendshapes: false,
-        outputFacialTransformationMatrixes: false
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : 'unknown error';
-      errors.push(`face model ${modelAssetPath}: ${message}`);
-    }
+  try {
+    return await FaceLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: { modelAssetPath: LOCAL_FACE_MODEL_PATH },
+      runningMode: 'VIDEO',
+      numFaces: 1,
+      outputFaceBlendshapes: false,
+      outputFacialTransformationMatrixes: false
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : 'unknown error';
+    throw new Error(`local face model ${LOCAL_FACE_MODEL_PATH}: ${message}`);
   }
-
-  throw new Error(errors.join(' | '));
 }
 
 export function useHandGestureTabs() {
@@ -147,6 +121,7 @@ export function useHandGestureTabs() {
   const pointerDwellStartAtRef = useRef(0);
   const pointerDwellAnchorRef = useRef<{ x: number; y: number } | null>(null);
   const pointerDwellClickedRef = useRef(false);
+  const faceModelReadyRef = useRef(false);
 
   const handSwipeDetector = useMemo(
     () =>
@@ -216,6 +191,7 @@ export function useHandGestureTabs() {
     }
 
     if (controlMode === 'face' && !faceLandmarker) {
+      rafRef.current = requestAnimationFrame(loop);
       return;
     }
 
@@ -425,17 +401,32 @@ export function useHandGestureTabs() {
       setState((prev) => ({
         ...prev,
         status: 'loading-model',
-        message: 'Camera is on. Loading hand + face models...'
+        message:
+          controlMode === 'face'
+            ? 'Camera is on. Loading local hand + face models...'
+            : 'Camera is on. Loading local hand model...'
       }));
 
-      const filesetResolver = await createResolverWithFallback();
-      const [handLandmarker, faceLandmarker] = await Promise.all([
-        createHandLandmarkerWithFallback(filesetResolver),
-        createFaceLandmarkerWithFallback(filesetResolver)
-      ]);
+      const filesetResolver = await createLocalResolver();
+      const handLandmarker = await createLocalHandLandmarker(filesetResolver);
 
       handLandmarkerRef.current = handLandmarker;
-      faceLandmarkerRef.current = faceLandmarker;
+
+      if (controlMode === 'face') {
+        const faceLandmarker = await createLocalFaceLandmarker(filesetResolver);
+        faceLandmarkerRef.current = faceLandmarker;
+        faceModelReadyRef.current = true;
+      } else {
+        // Hand mode should run even when face model is absent/corrupt.
+        void createLocalFaceLandmarker(filesetResolver)
+          .then((faceLandmarker) => {
+            faceLandmarkerRef.current = faceLandmarker;
+            faceModelReadyRef.current = true;
+          })
+          .catch(() => {
+            faceModelReadyRef.current = false;
+          });
+      }
 
       setState({
         status: 'running',
@@ -454,7 +445,7 @@ export function useHandGestureTabs() {
       setState({
         status: 'error',
         message: hasCamera
-          ? `Camera is active, but model failed to load: ${message}. For offline mode place models in /public/mediapipe/models/.`
+          ? `Camera is active, but local model/wasm failed to load: ${message}. Offline mode requires public/mediapipe/models/{hand_landmarker.task,face_landmarker.task} and public/mediapipe/wasm/.`
           : `Engine startup failed: ${message}`,
         lastGesture: null
       });
@@ -493,6 +484,7 @@ export function useHandGestureTabs() {
     pointerDwellClickedRef.current = false;
     pointerMoveAtRef.current = 0;
     pointerClickAtRef.current = 0;
+    faceModelReadyRef.current = false;
 
     const video = videoRef.current;
     if (video) {
@@ -509,6 +501,20 @@ export function useHandGestureTabs() {
 
   const changeMode = useCallback(
     (mode: ControlMode) => {
+      if (
+        mode === 'face' &&
+        state.status === 'running' &&
+        !faceLandmarkerRef.current &&
+        !faceModelReadyRef.current
+      ) {
+        setState((prev) => ({
+          ...prev,
+          message:
+            'Face mode unavailable: local face model could not be loaded. Keep hand mode or replace public/mediapipe/models/face_landmarker.task.'
+        }));
+        return;
+      }
+
       setControlMode(mode);
       setState((prev) => ({
         ...prev,

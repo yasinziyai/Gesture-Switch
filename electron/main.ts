@@ -1,9 +1,23 @@
-import { app, BrowserWindow, ipcMain, Menu, Tray, nativeImage, screen, session } from 'electron';
-import type { Event as ElectronEvent, IpcMainInvokeEvent } from 'electron';
-import { execFile } from 'node:child_process';
-import { promisify } from 'node:util';
-import path from 'node:path';
-import { fileURLToPath } from 'node:url';
+import {
+  app,
+  BrowserWindow,
+  ipcMain,
+  Menu,
+  Tray,
+  nativeImage,
+  screen,
+  session,
+} from "electron";
+import type {
+  Event as ElectronEvent,
+  IpcMainInvokeEvent,
+  NativeImage,
+} from "electron";
+import { execFile } from "node:child_process";
+import { existsSync } from "node:fs";
+import { promisify } from "node:util";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const execFileAsync = promisify(execFile);
 const MAIN_LOAD_TIMEOUT_MS = 2500;
@@ -18,33 +32,41 @@ let tray: Tray | null = null;
 let isQuitting = false;
 
 if (!app.isPackaged) {
-  app.commandLine.appendSwitch('ignore-certificate-errors');
-  app.on('certificate-error', (event, _webContents, _url, _error, _certificate, callback) => {
-    event.preventDefault();
-    callback(true);
-  });
+  app.commandLine.appendSwitch("ignore-certificate-errors");
+  app.on(
+    "certificate-error",
+    (event, _webContents, _url, _error, _certificate, callback) => {
+      event.preventDefault();
+      callback(true);
+    },
+  );
 }
 
-function appleScriptForDesktop(direction: 'next' | 'prev'): string {
-  const keyCode = direction === 'next' ? 124 : 123;
+function appleScriptForDesktop(direction: "next" | "prev"): string {
+  const keyCode = direction === "next" ? 124 : 123;
   return `tell application "System Events"\nkey code ${keyCode} using {control down}\nend tell`;
 }
 
-async function triggerMacDesktopShortcut(direction: 'next' | 'prev'): Promise<void> {
-  if (process.platform !== 'darwin') {
-    throw new Error('macOS is required for desktop space shortcuts');
+async function triggerMacDesktopShortcut(
+  direction: "next" | "prev",
+): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("macOS is required for desktop space shortcuts");
   }
 
-  await execFileAsync('osascript', ['-e', appleScriptForDesktop(direction)]);
+  await execFileAsync("osascript", ["-e", appleScriptForDesktop(direction)]);
 }
 
 async function runJxa(script: string): Promise<void> {
-  await execFileAsync('osascript', ['-l', 'JavaScript', '-e', script]);
+  await execFileAsync("osascript", ["-l", "JavaScript", "-e", script]);
 }
 
-async function moveMousePointer(normalizedX: number, normalizedY: number): Promise<void> {
-  if (process.platform !== 'darwin') {
-    throw new Error('macOS is required for pointer control');
+async function moveMousePointer(
+  normalizedX: number,
+  normalizedY: number,
+): Promise<void> {
+  if (process.platform !== "darwin") {
+    throw new Error("macOS is required for pointer control");
   }
 
   const display = screen.getPrimaryDisplay();
@@ -57,26 +79,26 @@ async function moveMousePointer(normalizedX: number, normalizedY: number): Promi
   const script = [
     'ObjC.import("ApplicationServices");',
     `const point = $.CGPointMake(${targetX}, ${targetY});`,
-    '$.CGWarpMouseCursorPosition(point);'
-  ].join('\n');
+    "$.CGWarpMouseCursorPosition(point);",
+  ].join("\n");
 
   await runJxa(script);
 }
 
 async function leftMouseClick(): Promise<void> {
-  if (process.platform !== 'darwin') {
-    throw new Error('macOS is required for pointer control');
+  if (process.platform !== "darwin") {
+    throw new Error("macOS is required for pointer control");
   }
 
   const script = [
     'ObjC.import("ApplicationServices");',
-    'const eventSource = $.CGEventSourceCreate($.kCGEventSourceStateCombinedSessionState);',
-    'const current = $.CGEventGetLocation($.CGEventCreate(null));',
-    'const down = $.CGEventCreateMouseEvent(eventSource, $.kCGEventLeftMouseDown, current, $.kCGMouseButtonLeft);',
-    'const up = $.CGEventCreateMouseEvent(eventSource, $.kCGEventLeftMouseUp, current, $.kCGMouseButtonLeft);',
-    '$.CGEventPost($.kCGHIDEventTap, down);',
-    '$.CGEventPost($.kCGHIDEventTap, up);'
-  ].join('\n');
+    "const eventSource = $.CGEventSourceCreate($.kCGEventSourceStateCombinedSessionState);",
+    "const current = $.CGEventGetLocation($.CGEventCreate(null));",
+    "const down = $.CGEventCreateMouseEvent(eventSource, $.kCGEventLeftMouseDown, current, $.kCGMouseButtonLeft);",
+    "const up = $.CGEventCreateMouseEvent(eventSource, $.kCGEventLeftMouseUp, current, $.kCGMouseButtonLeft);",
+    "$.CGEventPost($.kCGHIDEventTap, down);",
+    "$.CGEventPost($.kCGHIDEventTap, up);",
+  ].join("\n");
 
   await runJxa(script);
 }
@@ -87,13 +109,17 @@ function positionWindowUnderTray(window: BrowserWindow): void {
   const windowBounds = window.getBounds();
 
   if (!trayBounds) {
-    const x = Math.round(display.workArea.x + display.workArea.width - windowBounds.width - 12);
+    const x = Math.round(
+      display.workArea.x + display.workArea.width - windowBounds.width - 12,
+    );
     const y = Math.round(display.workArea.y + 10);
     window.setPosition(x, y, false);
     return;
   }
 
-  const x = Math.round(trayBounds.x + trayBounds.width / 2 - windowBounds.width / 2);
+  const x = Math.round(
+    trayBounds.x + trayBounds.width / 2 - windowBounds.width / 2,
+  );
   const y = Math.round(trayBounds.y + trayBounds.height + 8);
   window.setPosition(x, y, false);
 }
@@ -151,7 +177,10 @@ function delay(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
-async function waitWithTimeout(promise: Promise<unknown>, timeoutMs: number): Promise<void> {
+async function waitWithTimeout(
+  promise: Promise<unknown>,
+  timeoutMs: number,
+): Promise<void> {
   await Promise.race([promise.then(() => undefined), delay(timeoutMs)]);
 }
 
@@ -165,20 +194,20 @@ async function createWhiteboardWindow(): Promise<BrowserWindow> {
     width: 1400,
     height: 900,
     show: false,
-    title: 'Gestivo Whiteboard',
-    backgroundColor: '#0a111f',
+    title: "Gestivo Whiteboard",
+    backgroundColor: "#0a111f",
     autoHideMenuBar: true,
     fullscreenable: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      backgroundThrottling: false
-    }
+      backgroundThrottling: false,
+    },
   });
 
-  window.on('closed', () => {
+  window.on("closed", () => {
     if (whiteboardWindow === window) {
       whiteboardWindow = null;
     }
@@ -189,7 +218,9 @@ async function createWhiteboardWindow(): Promise<BrowserWindow> {
   if (wbUrl) {
     await window.loadURL(wbUrl);
   } else {
-    await window.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'whiteboard' });
+    await window.loadFile(path.join(__dirname, "../dist/index.html"), {
+      hash: "whiteboard",
+    });
   }
 
   whiteboardWindow = window;
@@ -221,30 +252,30 @@ async function createWindow(): Promise<void> {
     minHeight: 520,
     maxWidth: 520,
     maxHeight: 680,
-    title: 'Gestivo',
+    title: "Gestivo",
     show: false,
     resizable: false,
     maximizable: false,
     fullscreenable: false,
-    titleBarStyle: 'hiddenInset',
-    backgroundColor: '#0b1530',
+    titleBarStyle: "hiddenInset",
+    backgroundColor: "#0b1530",
     webPreferences: {
-      preload: path.join(__dirname, 'preload.cjs'),
+      preload: path.join(__dirname, "preload.cjs"),
       contextIsolation: true,
       nodeIntegration: false,
       sandbox: false,
-      backgroundThrottling: false
-    }
+      backgroundThrottling: false,
+    },
   });
 
-  mainWindow.on('close', (event) => {
+  mainWindow.on("close", (event) => {
     if (!isQuitting) {
       event.preventDefault();
       mainWindow?.hide();
     }
   });
 
-  mainWindow.on('blur', () => {
+  mainWindow.on("blur", () => {
     if (!app.isPackaged && mainWindow?.webContents.isDevToolsOpened()) {
       return;
     }
@@ -257,7 +288,10 @@ async function createWindow(): Promise<void> {
   if (!app.isPackaged && devUrl) {
     loadPromise = mainWindow.loadURL(splashUrl(true, devUrl) ?? devUrl);
   } else {
-    loadPromise = mainWindow.loadFile(path.join(__dirname, '../dist/index.html'), { hash: 'splash' });
+    loadPromise = mainWindow.loadFile(
+      path.join(__dirname, "../dist/index.html"),
+      { hash: "splash" },
+    );
   }
   await waitWithTimeout(loadPromise, MAIN_LOAD_TIMEOUT_MS);
 }
@@ -272,74 +306,162 @@ async function showMainContentInWindow(): Promise<void> {
     await waitWithTimeout(mainWindow.loadURL(devUrl), MAIN_LOAD_TIMEOUT_MS);
   } else {
     await waitWithTimeout(
-      mainWindow.loadFile(path.join(__dirname, '../dist/index.html')),
-      MAIN_LOAD_TIMEOUT_MS
+      mainWindow.loadFile(path.join(__dirname, "../dist/index.html")),
+      MAIN_LOAD_TIMEOUT_MS,
     );
   }
 }
 
+function trimTransparentPadding(image: NativeImage): NativeImage {
+  const { width, height } = image.getSize();
+  if (width <= 0 || height <= 0) {
+    return image;
+  }
+
+  const bitmap = image.toBitmap();
+  let minX = width;
+  let minY = height;
+  let maxX = -1;
+  let maxY = -1;
+
+  for (let y = 0; y < height; y += 1) {
+    for (let x = 0; x < width; x += 1) {
+      const alpha = bitmap[(y * width + x) * 4 + 3];
+      if (alpha === 0) {
+        continue;
+      }
+
+      minX = Math.min(minX, x);
+      minY = Math.min(minY, y);
+      maxX = Math.max(maxX, x);
+      maxY = Math.max(maxY, y);
+    }
+  }
+
+  if (maxX < minX || maxY < minY) {
+    return image;
+  }
+
+  if (minX === 0 && minY === 0 && maxX === width - 1 && maxY === height - 1) {
+    return image;
+  }
+
+  return image.crop({
+    x: minX,
+    y: minY,
+    width: maxX - minX + 1,
+    height: maxY - minY + 1,
+  });
+}
+
 function createTray(): void {
-  const icon = nativeImage.createEmpty();
+  const trayIconCandidates = [
+    path.join(app.getAppPath(), "public", "tab-bar-logo.png"),
+    path.join(__dirname, "../dist/tab-bar-logo.png"),
+  ];
+  const trayIconPath = trayIconCandidates.find((candidate) =>
+    existsSync(candidate),
+  );
+  let icon = trayIconPath
+    ? nativeImage.createFromPath(trayIconPath)
+    : nativeImage.createEmpty();
+
+  if (!icon.isEmpty()) {
+    icon = trimTransparentPadding(icon);
+    const { width, height } = icon.getSize();
+    if (process.platform === "darwin" && width !== height) {
+      const side = Math.min(width, height);
+      icon = icon.crop({
+        x: Math.floor((width - side) / 2),
+        y: Math.floor((height - side) / 2),
+        width: side,
+        height: side,
+      });
+    }
+    icon = icon.resize({
+      height: process.platform === "darwin" ? 20 : 20,
+      quality: "best",
+    });
+  }
+
+  if (!icon.isEmpty()) {
+    icon.setTemplateImage(false);
+  }
+
   tray = new Tray(icon);
-  tray.setTitle('GV');
-  tray.setToolTip('Gestivo');
-  tray.on('click', () => {
+  if (!icon.isEmpty()) {
+    tray.setImage(icon);
+  }
+  tray.setTitle("");
+  tray.setToolTip("Gestivo");
+  tray.on("click", () => {
     toggleWindow();
   });
 
   const contextMenu = Menu.buildFromTemplate([
     {
-      label: 'Open Gestivo',
-      click: () => showWindow()
+      label: "Open Gestivo",
+      click: () => showWindow(),
     },
     {
-      type: 'separator'
+      type: "separator",
     },
     {
-      label: 'Quit',
+      label: "Quit",
       click: () => {
         isQuitting = true;
         app.quit();
-      }
-    }
+      },
+    },
   ]);
 
   tray.setContextMenu(contextMenu);
 }
 
 app.whenReady().then(async () => {
-  if (process.platform === 'darwin') {
+  if (process.platform === "darwin") {
     app.dock.hide();
   }
 
-  session.defaultSession.setPermissionCheckHandler((_webContents, permission) => {
-    return permission === 'media';
-  });
-
-  session.defaultSession.setPermissionRequestHandler((_webContents, permission, callback) => {
-    callback(permission === 'media');
-  });
-
-  ipcMain.handle('shortcut:tab', async (_event: IpcMainInvokeEvent, direction: 'next' | 'prev') => {
-    await triggerMacDesktopShortcut(direction);
-  });
-
-  ipcMain.handle(
-    'pointer:move',
-    async (_event: IpcMainInvokeEvent, normalizedX: number, normalizedY: number) => {
-      await moveMousePointer(normalizedX, normalizedY);
-    }
+  session.defaultSession.setPermissionCheckHandler(
+    (_webContents, permission) => {
+      return permission === "media";
+    },
   );
 
-  ipcMain.handle('pointer:click', async () => {
+  session.defaultSession.setPermissionRequestHandler(
+    (_webContents, permission, callback) => {
+      callback(permission === "media");
+    },
+  );
+
+  ipcMain.handle(
+    "shortcut:tab",
+    async (_event: IpcMainInvokeEvent, direction: "next" | "prev") => {
+      await triggerMacDesktopShortcut(direction);
+    },
+  );
+
+  ipcMain.handle(
+    "pointer:move",
+    async (
+      _event: IpcMainInvokeEvent,
+      normalizedX: number,
+      normalizedY: number,
+    ) => {
+      await moveMousePointer(normalizedX, normalizedY);
+    },
+  );
+
+  ipcMain.handle("pointer:click", async () => {
     await leftMouseClick();
   });
 
-  ipcMain.handle('whiteboard:open', async () => {
+  ipcMain.handle("whiteboard:open", async () => {
     await showWhiteboardWindow();
   });
 
-  ipcMain.handle('whiteboard:close', () => {
+  ipcMain.handle("whiteboard:close", () => {
     closeWhiteboardWindow();
   });
 
@@ -352,15 +474,15 @@ app.whenReady().then(async () => {
     positionWindowUnderTray(mainWindow);
   }
 
-  app.on('activate', () => {
+  app.on("activate", () => {
     showWindow();
   });
 });
 
-app.on('before-quit', () => {
+app.on("before-quit", () => {
   isQuitting = true;
 });
 
-app.on('window-all-closed', (event: ElectronEvent) => {
+app.on("window-all-closed", (event: ElectronEvent) => {
   event.preventDefault();
 });

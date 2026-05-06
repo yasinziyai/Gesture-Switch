@@ -1,15 +1,8 @@
 import { useCallback, useEffect, useRef } from "react";
 import { FilesetResolver, HandLandmarker } from "@mediapipe/tasks-vision";
 
-const HAND_MODEL_CANDIDATES = [
-  "/mediapipe/models/hand_landmarker.task",
-  "https://storage.googleapis.com/mediapipe-models/hand_landmarker/hand_landmarker/float16/1/hand_landmarker.task",
-];
-
-const WASM_ROOT_CANDIDATES = [
-  "/mediapipe/wasm",
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision/wasm",
-];
+const LOCAL_HAND_MODEL_PATH = "/mediapipe/models/hand_landmarker.task";
+const LOCAL_WASM_ROOT = "/mediapipe/wasm";
 
 const PINCH_ENGAGE_RATIO = 0.4;
 const PINCH_RELEASE_RATIO = 0.62;
@@ -59,34 +52,26 @@ function isFingerExtended(
   return tip.y < pip.y - margin;
 }
 
-async function createResolverWithFallback() {
-  const errors: string[] = [];
-  for (const root of WASM_ROOT_CANDIDATES) {
-    try {
-      return await FilesetResolver.forVisionTasks(root);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      errors.push(`wasm root ${root}: ${message}`);
-    }
+async function createLocalResolver() {
+  try {
+    return await FilesetResolver.forVisionTasks(LOCAL_WASM_ROOT);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`local wasm ${LOCAL_WASM_ROOT}: ${message}`);
   }
-  throw new Error(errors.join(" | "));
 }
 
-async function createHandLandmarkerWithFallback(filesetResolver: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>) {
-  const errors: string[] = [];
-  for (const modelAssetPath of HAND_MODEL_CANDIDATES) {
-    try {
-      return await HandLandmarker.createFromOptions(filesetResolver, {
-        baseOptions: { modelAssetPath },
-        runningMode: "VIDEO",
-        numHands: 1,
-      });
-    } catch (error) {
-      const message = error instanceof Error ? error.message : "unknown error";
-      errors.push(`hand model ${modelAssetPath}: ${message}`);
-    }
+async function createLocalHandLandmarker(filesetResolver: Awaited<ReturnType<typeof FilesetResolver.forVisionTasks>>) {
+  try {
+    return await HandLandmarker.createFromOptions(filesetResolver, {
+      baseOptions: { modelAssetPath: LOCAL_HAND_MODEL_PATH },
+      runningMode: "VIDEO",
+      numHands: 1,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : "unknown error";
+    throw new Error(`local hand model ${LOCAL_HAND_MODEL_PATH}: ${message}`);
   }
-  throw new Error(errors.join(" | "));
 }
 
 export function useWhiteboardGestures(options: UseWhiteboardGesturesOptions) {
@@ -370,8 +355,8 @@ export function useWhiteboardGestures(options: UseWhiteboardGesturesOptions) {
         video.srcObject = stream;
         await video.play();
 
-        const filesetResolver = await createResolverWithFallback();
-        const handLandmarker = await createHandLandmarkerWithFallback(filesetResolver);
+        const filesetResolver = await createLocalResolver();
+        const handLandmarker = await createLocalHandLandmarker(filesetResolver);
         handLandmarkerRef.current = handLandmarker;
         rafRef.current = requestAnimationFrame(loop);
       } catch {

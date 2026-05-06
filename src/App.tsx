@@ -129,7 +129,9 @@ function ControlPanelApp() {
 
       <motion.header className="topbar glass" variants={itemVariants}>
         <div className="brand">
-          <div className="badge">GV</div>
+          <div className="badge">
+            <img src="/logo.png" alt="Gestivo logo" />
+          </div>
           <div>
             <h1>Gestivo</h1>
             <p>macOS Desktop + Pointer Control</p>

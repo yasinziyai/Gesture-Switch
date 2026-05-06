@@ -129,14 +129,15 @@ body::after {
   width: 44px;
   height: 44px;
   border-radius: 10px;
-  display: grid;
-  place-items: center;
-  font-weight: 800;
-  letter-spacing: 0.04em;
-  color: #06131d;
-  background: linear-gradient(145deg, #8ffff8, #62d9ff);
-  border: 1px solid rgba(107, 255, 245, 0.86);
-  box-shadow: 0 6px 14px rgba(61, 191, 255, 0.32);
+  overflow: hidden;
+  border: 1px solid rgba(107, 255, 245, 0.38);
+  box-shadow: 0 6px 14px rgba(17, 35, 75, 0.5);
+}
+
+.badge img {
+  width: 100%;
+  height: 100%;
+  display: block;
 }
 
 h1 {

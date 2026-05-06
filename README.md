@@ -6,6 +6,20 @@
 - Hand Mode: Swipe راست/چپ دست -> Desktop بعدی/قبلی
 - Face Mode: حرکت صورت/نگاه راست/چپ -> Desktop بعدی/قبلی
 
+## اجرای آفلاین (اجباری)
+- اپ دیگر fallback آنلاین برای مدل‌ها ندارد.
+- قبل از اجرا این فایل‌ها باید داخل پروژه موجود باشند:
+  - `public/mediapipe/models/hand_landmarker.task`
+  - `public/mediapipe/models/face_landmarker.task`
+- در `postinstall` این کارها انجام می‌شود:
+  - wasm از `node_modules/@mediapipe/tasks-vision/wasm` به `public/mediapipe/wasm` کپی می‌شود.
+  - اگر مدل‌ها وجود نداشته باشند یا خراب باشند، اسکریپت تلاش می‌کند آن‌ها را از `storage.googleapis.com` دانلود و اعتبارسنجی (SHA-256) کند.
+- اگر دانلود خودکار انجام نشد، این دستور را اجرا کنید:
+```bash
+npm run sync:mediapipe-assets
+```
+- اگر اینترنت ندارید، مدل‌ها را دستی دانلود و در مسیر `public/mediapipe/models/` قرار دهید.
+
 ## استک
 - Electron (اپ نصبی macOS)
 - React + TypeScript + Vite (رابط کاربری)
